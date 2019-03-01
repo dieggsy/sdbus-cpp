@@ -78,6 +78,13 @@ if(ENABLE_PERFTESTS)
     target_link_libraries(libsdbus-c++_perftests_server sdbus-c++)
 endif()
 
+# Manual stress tests
+option(ENABLE_STRESSTESTS "Build and install manual stress tests (default OFF)" ON)
+if(ENABLE_STRESSTESTS)
+    add_executable(sdbus-c++-stress-tests stresstests/stresstests.cpp stresstests/celsius-thermometer-adaptor.h)
+    target_link_libraries(sdbus-c++-stress-tests sdbus-c++)
+endif()
+
 #----------------------------------
 # INSTALLATION
 #----------------------------------
@@ -90,6 +97,11 @@ if(ENABLE_PERFTESTS)
     install(TARGETS libsdbus-c++_perftests_client DESTINATION /opt/test/bin)
     install(TARGETS libsdbus-c++_perftests_server DESTINATION /opt/test/bin)
     install(FILES perftests/files/org.sdbuscpp.perftest.conf DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/dbus-1/system.d)
+endif()
+
+if(ENABLE_STRESSTESTS)
+    install(TARGETS sdbus-c++-stress-tests DESTINATION /opt/test/bin)
+    install(FILES perftests/files/org.sdbuscpp.stresstest.conf DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/dbus-1/system.d)
 endif()
 
 #----------------------------------
