@@ -28,12 +28,12 @@ protected:
 
     virtual void onConcatenatedSignal(const std::string& concatenatedString) = 0;
 
+    virtual void onConcatenateReply(const std::string& result, const sdbus::Error* error) = 0;
+
 public:
-    std::string concatenate(const std::map<std::string, sdbus::Variant>& params)
+    void concatenate(const std::map<std::string, sdbus::Variant>& params)
     {
-        std::string result;
-        object_.callMethod("concatenate").onInterface(interfaceName).withArguments(params).storeResultsTo(result);
-        return result;
+        object_.callMethodAsync("concatenate").onInterface(interfaceName).withArguments(params).uponReplyInvoke([this](const sdbus::Error* error, const std::string& result){ this->onConcatenateReply(result, error); });
     }
 
 private:

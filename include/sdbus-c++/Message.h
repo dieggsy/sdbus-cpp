@@ -150,7 +150,8 @@ namespace sdbus {
         void seal();
         void rewind(bool complete);
 
-    protected:
+    //protected:
+    public:
         void* getMsg() const;
 
     private:

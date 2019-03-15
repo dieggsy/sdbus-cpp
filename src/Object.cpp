@@ -239,6 +239,9 @@ void Object::activateInterfaceVTable( const std::string& interfaceName
 
 int Object::sdbus_method_callback(sd_bus_message *sdbusMessage, void *userData, sd_bus_error *retError)
 {
+    auto refCount = *((unsigned*)sdbusMessage);
+    std::cout << "sdbus_method_callback RefCount == " << refCount << std::endl;
+
     MethodCall message(sdbusMessage);
 
     auto* object = static_cast<Object*>(userData);

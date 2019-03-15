@@ -26,7 +26,6 @@ protected:
     {
     }
 
-
 public:
     uint32_t getCurrentTemperature()
     {

@@ -329,7 +329,7 @@ bool Connection::waitForNextRequest()
     struct pollfd fds[] = {{sdbusFd, sdbusEvents, 0}, {loopExitFd_, POLLIN | POLLHUP | POLLERR | POLLNVAL, 0}};
     auto fdsCount = sizeof(fds)/sizeof(fds[0]);
 
-    std::cerr << "[lt] Going to poll on fs " << sdbusFd << " with events " << sdbusEvents << ", and fs " << loopExitFd_ << " with timeout " << usec << " and fdscount == " << fdsCount << std::endl;
+    //std::cerr << "[lt] Going to poll on fs " << sdbusFd << " with events " << sdbusEvents << ", and fs " << loopExitFd_ << " with timeout " << usec << " and fdscount == " << fdsCount << std::endl;
     r = poll(fds, fdsCount, usec == (uint64_t) -1 ? -1 : (usec+999)/1000);
 
     if (r < 0 && errno == EINTR)

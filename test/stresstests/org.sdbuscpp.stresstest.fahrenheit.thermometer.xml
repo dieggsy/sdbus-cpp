@@ -2,7 +2,6 @@
 
 <node name="/org/sdbuscpp/stresstest/fahrenheit/thermometer">
     <interface name="org.sdbuscpp.stresstest.fahrenheit.thermometer">
-        <annotation name="org.freedesktop.DBus.Method.Async" value="client" />
         <method name="getCurrentTemperature">
             <arg type="u" name="result" direction="out" />
         </method>

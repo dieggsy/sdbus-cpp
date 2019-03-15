@@ -60,7 +60,8 @@ namespace sdbus {
     private:
         void send(const MethodReply& reply) const;
 
-    private:
+    //private:
+    public:
         MethodCall call_;
         sdbus::internal::Object* object_{};
     };
@@ -101,6 +102,7 @@ namespace sdbus {
         Result(MethodResult result);
         void returnResults(const _Results&... results) const;
         void returnError(const Error& error) const;
+        using MethodResult::call_;
     };
 
     template <typename... _Results>

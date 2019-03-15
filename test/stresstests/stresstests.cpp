@@ -37,8 +37,23 @@
 #include <thread>
 #include <chrono>
 #include <cassert>
+#include <atomic>
+#include <sstream>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+
+// TODO delete
+#include <systemd/sd-bus.h>
 
 using namespace std::chrono_literals;
+using namespace std::string_literals;
+
+#define SERVICE_1_BUS_NAME "org.sdbuscpp.stresstest.service1"
+#define SERVICE_2_BUS_NAME "org.sdbuscpp.stresstest.service2"
+#define CELSIUS_THERMOMETER_OBJECT_PATH "/org/sdbuscpp/stresstest/celsius/thermometer"
+#define FAHRENHEIT_THERMOMETER_OBJECT_PATH "/org/sdbuscpp/stresstest/fahrenheit/thermometer"
+#define CONCATENATOR_OBJECT_PATH "/org/sdbuscpp/stresstest/concatenator"
 
 class CelsiusThermometerAdaptor : public sdbus::Interfaces<org::sdbuscpp::stresstest::celsius::thermometer_adaptor>
 {
@@ -66,18 +81,19 @@ class FahrenheitThermometerAdaptor : public sdbus::Interfaces<org::sdbuscpp::str
 public:
     FahrenheitThermometerAdaptor(sdbus::IConnection& connection, std::string objectPath)
         : sdbus::Interfaces<org::sdbuscpp::stresstest::fahrenheit::thermometer_adaptor>(connection, std::move(objectPath))
-        , celsiusProxy(connection, "org.sdbuscpp.stresstest.service2", "/org/sdbuscpp/stresstest/celsius/thermometer")
+        , celsiusProxy_(connection, SERVICE_2_BUS_NAME, CELSIUS_THERMOMETER_OBJECT_PATH)
     {
     }
 
 protected:
     virtual uint32_t getCurrentTemperature() override
     {
-        return static_cast<uint32_t>(celsiusProxy.getCurrentTemperature() * 1.8 + 32.);
+        // In this D-Bus call, make yet another D-Bus call to another service over the same connection
+        return static_cast<uint32_t>(celsiusProxy_.getCurrentTemperature() * 1.8 + 32.);
     }
 
 private:
-    CelsiusThermometerProxy celsiusProxy;
+    CelsiusThermometerProxy celsiusProxy_;
 };
 
 class FahrenheitThermometerProxy : public sdbus::ProxyInterfaces<org::sdbuscpp::stresstest::fahrenheit::thermometer_proxy>
@@ -89,165 +105,238 @@ public:
 class ConcatenatorAdaptor : public sdbus::Interfaces<org::sdbuscpp::stresstest::concatenator_adaptor>
 {
 public:
-    using sdbus::Interfaces<org::sdbuscpp::stresstest::concatenator_adaptor>::Interfaces;
+    ConcatenatorAdaptor(sdbus::IConnection& connection, std::string objectPath)
+        : sdbus::Interfaces<org::sdbuscpp::stresstest::concatenator_adaptor>(connection, std::move(objectPath))
+    {
+        unsigned int workers = std::thread::hardware_concurrency();
+        if (workers < 4)
+            workers = 4;
+
+        for (unsigned int i = 0; i < workers; ++i)
+            workers_.emplace_back([this]()
+            {
+                std::cout << "Created worker thread 0x" << std::hex << std::this_thread::get_id() << std::dec << std::endl;
+                while(!exit_)
+                {
+                    //std::cout << "Thread " << std::this_thread::get_id() << " going to wait" << std::endl;
+                    // Pop a work item from the queue
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    cond_.wait(lock, [this]{return !requests_.empty() || exit_;});
+                    //std::cout << "Thread " << std::this_thread::get_id() << " woken up" << std::endl;
+                    if (exit_)
+                        break;
+                    auto request = requests_.front();
+                    // TODO: Assert ze ma request.result.callMsg aspon 1 refcount
+                    auto refCount = *((unsigned*)request.result.call_.getMsg());
+                    //std::cout << "RefCount == " << refCount << std::endl;
+                    if (refCount == 1 || refCount == 3)
+                    {
+                        std::cout << "   !!! Problem refCount == " << refCount << std::endl;
+                    }
+                    requests_.pop();
+                    lock.unlock();
+
+                    // Do concatenation work, return results and fire signal
+                    auto aString = request.input.at("key1").get<std::string>();
+                    auto aNumber = request.input.at("key2").get<uint32_t>();
+                    auto resultString = aString + " " + std::to_string(aNumber);
+                    request.result.returnResults(resultString);
+                    //std::cout << "Processed concatenation: " << resultString << std::endl;
+                    concatenatedSignal(resultString);
+
+                    if (refCount == 1 || refCount == 3)
+                    {
+                        refCount = *((unsigned*)request.result.call_.getMsg());
+                        std::cout << " RefCount == " << refCount << std::endl;
+                    }
+                }
+                //std::cout << "Thread " << std::this_thread::get_id() << " exiting" << std::endl;
+            });
+    }
+
+    ~ConcatenatorAdaptor()
+    {
+        exit_ = true;
+        cond_.notify_all();
+        for (auto& worker : workers_)
+            worker.join();
+    }
 
 protected:
-    virtual std::string concatenate(const std::map<std::string, sdbus::Variant>& params) override
+    virtual void concatenate(sdbus::Result<std::string> result, const std::map<std::string, sdbus::Variant>& params) override
     {
-        auto aString = params.at("key1").get<std::string>();
-        auto aNumber = params.at("key2").get<int>();
-        auto result = aString + std::to_string(aNumber);
-        concatenatedSignal(result);
-        return result;
+        //std::cout << "Got concatenation request: " << params.at("key2").get<uint32_t>() << std::endl;
+        std::unique_lock<std::mutex> lock(mutex_);
+        requests_.push(WorkItem{params, std::move(result)});
+        lock.unlock();
+        cond_.notify_one();
     }
 
 private:
-    uint32_t m_currentTemperature{};
-};
-
-class CelsiusThermometerProxy : public sdbus::ProxyInterfaces<org::sdbuscpp::stresstest::celsius::thermometer_proxy>
-{
-public:
-    using sdbus::ProxyInterfaces<org::sdbuscpp::stresstest::celsius::thermometer_proxy>::ProxyInterfaces;
-};
-
-
-
-
-class PerftestClient : public sdbus::ProxyInterfaces<org::sdbuscpp::perftest_proxy>
-{
-public:
-    PerftestClient(std::string destination, std::string objectPath)
-        : sdbus::ProxyInterfaces<org::sdbuscpp::perftest_proxy>(std::move(destination), std::move(objectPath))
+    struct WorkItem
     {
-    }
-
-protected:
-    virtual void onDataSignal(const std::string& data) override
-    {
-        static unsigned int counter = 0;
-        static std::chrono::time_point<std::chrono::steady_clock> startTime;
-        
-        assert(data.size() == m_msgSize);
-        
-        ++counter;
-        
-        if (counter == 1)
-            startTime = std::chrono::steady_clock::now();
-        else if (counter == m_msgCount)
-        {
-            auto stopTime = std::chrono::steady_clock::now();
-            std::cout << "Received " << m_msgCount << " signals in: " << std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime).count() << " ms" << std::endl;
-            counter = 0;
-        }
-    }
-    
-public:
-    unsigned int m_msgSize{};
-    unsigned int m_msgCount{};
-};
-
-std::string createRandomString(size_t length)
-{
-    auto randchar = []() -> char
-    {
-        const char charset[] =
-        "0123456789"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz";
-        const size_t max_index = (sizeof(charset) - 1);
-        return charset[ rand() % max_index ];
+        std::map<std::string, sdbus::Variant> input;
+        sdbus::Result<std::string> result;
     };
-    std::string str(length, 0);
-    std::generate_n(str.begin(), length, randchar);
-    return str;
-}
+    std::mutex mutex_;
+    std::condition_variable cond_;
+    std::queue<WorkItem> requests_;
+    std::vector<std::thread> workers_;
+    std::atomic<bool> exit_{};
+};
 
+class ConcatenatorProxy : public sdbus::ProxyInterfaces<org::sdbuscpp::stresstest::concatenator_proxy>
+{
+public:
+    using sdbus::ProxyInterfaces<org::sdbuscpp::stresstest::concatenator_proxy>::ProxyInterfaces;
+
+private:
+    virtual void onConcatenateReply(const std::string& result, const sdbus::Error* error) override
+    {
+        assert(error == nullptr);
+
+        std::stringstream str(result);
+        std::string aString;
+        str >> aString;
+        assert(aString == "sdbus-c++-stress-tests");
+
+        uint32_t aNumber;
+        str >> aNumber;
+        assert(aNumber >= 0);
+
+        ++repliesReceived_;
+    }
+
+    virtual void onConcatenatedSignal(const std::string& concatenatedString) override
+    {
+        std::stringstream str(concatenatedString);
+        std::string aString;
+        str >> aString;
+        assert(aString == "sdbus-c++-stress-tests");
+
+        uint32_t aNumber;
+        str >> aNumber;
+        assert(aNumber >= 0);
+
+        ++signalsReceived_;
+    }
+
+public:
+    std::atomic<uint32_t> repliesReceived_;
+    std::atomic<uint32_t> signalsReceived_;
+};
 
 //-----------------------------------------
 int main(int /*argc*/, char */*argv*/[])
 {
-    const char* destinationName = "org.sdbuscpp.perftest";
-    const char* objectPath = "/org/sdbuscpp/perftest";
-    //PerftestClient client(destinationName, objectPath);
-
-    const unsigned int repetitions{2};
-    unsigned int msgCount = 1000;
-    unsigned int msgSize{};
-    
+    auto service2Connection = sdbus::createSystemBusConnection(SERVICE_2_BUS_NAME);
+    std::thread service2Thread([&con = *service2Connection]()
     {
-        PerftestClient client(destinationName, objectPath);
-        msgSize = 20;
-        std::cout << "** Measuring signals of size " << msgSize << " bytes (" << repetitions << " repetitions)..." << std::endl << std::endl;
-        client.m_msgCount = msgCount; client.m_msgSize = msgSize;
-        for (unsigned int r = 0; r < repetitions; ++r)
-        {
-            client.sendDataSignals(msgCount, msgSize);
+        CelsiusThermometerAdaptor thermometer(con, CELSIUS_THERMOMETER_OBJECT_PATH);
+        con.enterProcessingLoop();
+    });
 
-            std::this_thread::sleep_for(1000ms);
-        }
-    }
-    
+    auto service1Connection = sdbus::createSystemBusConnection(SERVICE_1_BUS_NAME);
+    std::thread service1Thread([&con = *service1Connection]()
     {
-        PerftestClient client(destinationName, objectPath);
-        msgSize = 1000;
-        std::cout << std::endl << "** Measuring signals of size " << msgSize << " bytes (" << repetitions << " repetitions)..." << std::endl << std::endl;
-        client.m_msgCount = msgCount; client.m_msgSize = msgSize;
-        for (unsigned int r = 0; r < repetitions; ++r)
-        {
-            client.sendDataSignals(msgCount, msgSize);
+        ConcatenatorAdaptor concatenator(con, CONCATENATOR_OBJECT_PATH);
+        FahrenheitThermometerAdaptor thermometer(con, FAHRENHEIT_THERMOMETER_OBJECT_PATH);
+        con.enterProcessingLoop();
+    });
 
-            std::this_thread::sleep_for(1000ms);
-        }
-    }
-    
+    std::this_thread::sleep_for(100ms);
+
+    std::atomic<uint32_t> concatenationCallsMade{0};
+    std::atomic<uint32_t> concatenationRepliesReceived{0};
+    std::atomic<uint32_t> concatenationSignalsReceived{0};
+    std::atomic<uint32_t> thermometerCallsMade{0};
+
+    auto clientConnection = sdbus::createSystemBusConnection();
+    std::thread clientThread([&, &con = *clientConnection]()
     {
-        PerftestClient client(destinationName, objectPath);
-        msgSize = 20;
-        std::cout << std::endl << "** Measuring method calls of size " << msgSize << " bytes (" << repetitions << " repetitions)..." << std::endl << std::endl;
-        for (unsigned int r = 0; r < repetitions; ++r)
-        {
-            auto str1 = createRandomString(msgSize/2);
-            auto str2 = createRandomString(msgSize/2);
+        std::atomic<bool> stopClients{false};
 
-            auto startTime = std::chrono::steady_clock::now();
-            for (unsigned int i = 0; i < msgCount; i++)
+        std::thread concatenatorThread([&]()
+        {
+            ConcatenatorProxy concatenator(con, SERVICE_1_BUS_NAME, CONCATENATOR_OBJECT_PATH);
+
+            uint32_t localCounter{};
+
+            // Issue async concatenate calls densely one after another
+            while (!stopClients)
             {
-                auto result = client.concatenateTwoStrings(str1, str2);
+                std::map<std::string, sdbus::Variant> param;
+                param["key1"] = "sdbus-c++-stress-tests";
+                param["key2"] = localCounter++;
 
-                assert(result.size() == str1.size() + str2.size());
-                assert(result.size() == msgSize);
+                concatenator.concatenate(param);
+
+                if ((localCounter % 10) == 0)
+                {
+                    // Make sure the system is catching up with our async requests,
+                    // otherwise sleep a bit to slow down flooding the server.
+                    assert(localCounter >= concatenator.repliesReceived_);
+                    while ((localCounter - concatenator.repliesReceived_) > 20)
+                        std::this_thread::sleep_for(5ms);
+
+                    // Update statistics
+                    concatenationCallsMade = localCounter;
+                    concatenationRepliesReceived = (uint32_t)concatenator.repliesReceived_;
+                    concatenationSignalsReceived = (uint32_t)concatenator.signalsReceived_;
+                }
             }
-            auto stopTime = std::chrono::steady_clock::now();
-            std::cout << "Called " << msgCount << " methods in: " << std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime).count() << " ms" << std::endl;
+        });
 
-            std::this_thread::sleep_for(1000ms);
-        }
-    }
-    
-    {
-        PerftestClient client(destinationName, objectPath);
-        msgSize = 1000;
-        std::cout << std::endl << "** Measuring method calls of size " << msgSize << " bytes (" << repetitions << " repetitions)..." << std::endl << std::endl;
-        for (unsigned int r = 0; r < repetitions; ++r)
+        std::thread thermometerThread([&]()
         {
-            auto str1 = createRandomString(msgSize/2);
-            auto str2 = createRandomString(msgSize/2);
+//            FahrenheitThermometerProxy thermometer(con, SERVICE_1_BUS_NAME, FAHRENHEIT_THERMOMETER_OBJECT_PATH);
+//            uint32_t localCounter{};
+//            uint32_t previousTemperature{};
 
-            auto startTime = std::chrono::steady_clock::now();
-            for (unsigned int i = 0; i < msgCount; i++)
-            {
-                auto result = client.concatenateTwoStrings(str1, str2);
+//            while (!stopClients)
+//            {
+//                localCounter++;
+//                auto temperature = thermometer.getCurrentTemperature();
+//                assert(temperature >= previousTemperature); // The temperature shall rise continually
+//                previousTemperature = temperature;
+//                std::this_thread::sleep_for(5ms);
 
-                assert(result.size() == str1.size() + str2.size());
-                assert(result.size() == msgSize);
-            }
-            auto stopTime = std::chrono::steady_clock::now();
-            std::cout << "Called " << msgCount << " methods in: " << std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime).count() << " ms" << std::endl;
+//                if ((localCounter % 10) == 0)
+//                    thermometerCallsMade = localCounter;
+//            }
+        });
 
-            std::this_thread::sleep_for(1000ms);
+        con.enterProcessingLoop();
+
+        stopClients = true;
+        concatenatorThread.join();
+        thermometerThread.join();
+    });
+
+    std::atomic<bool> exitLogger{};
+    std::thread loggerThread([&]()
+    {
+        while (!exitLogger)
+        {
+            std::this_thread::sleep_for(1s);
+
+            std::cout << "Made " << concatenationCallsMade << " concatenation calls, received " << concatenationRepliesReceived << " replies and " << concatenationSignalsReceived << " signals so far." << std::endl;
+            std::cout << "Made " << thermometerCallsMade << " thermometer calls so far." << std::endl << std::endl;
         }
-    }
+    });
+
+    //__builtin_trap();
+
+    getchar();
+
+    exitLogger = true;
+    loggerThread.join();
+    clientConnection->leaveProcessingLoop();
+    clientThread.join();
+    service1Connection->leaveProcessingLoop();
+    service1Thread.join();
+    service2Connection->leaveProcessingLoop();
+    service2Thread.join();
     
     return 0;
 }
