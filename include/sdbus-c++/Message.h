@@ -50,9 +50,17 @@ namespace sdbus {
     class MethodReply;
     class Signal;
     template <typename... _Results> class Result;
+
+    namespace internal {
+        class ISdBus;
+    }
 }
 
 namespace sdbus {
+
+    // Assume the caller has already obtained message ownership
+    struct adopt_message_t { explicit adopt_message_t() = default; };
+    inline constexpr adopt_message_t adopt_message{};
 
     /********************************************//**
      * @class Message
@@ -71,18 +79,10 @@ namespace sdbus {
     class Message
     {
     public:
-        enum class Type
-        {    METHOD_CALL
-        ,    ASYNC_METHOD_CALL
-        ,    METHOD_REPLY
-        /*,  ASYNC_METHOD_REPLY? */
-        ,    SIGNAL
-        ,    PLAIN_MESSAGE
-        };
-
-    public:
         Message() = default;
-        Message(void *msg) noexcept;
+        Message(internal::ISdBus* sdbus) noexcept;
+        Message(void *msg, internal::ISdBus* sdbus) noexcept;
+        Message(void *msg, internal::ISdBus* sdbus, adopt_message_t) noexcept;
         Message(const Message&) noexcept;
         Message& operator=(const Message&) noexcept;
         Message(Message&& other) noexcept;
@@ -152,10 +152,8 @@ namespace sdbus {
 
     //protected:
     public:
-        void* getMsg() const;
-
-    private:
         void* msg_{};
+        internal::ISdBus* sdbus_{};
         mutable bool ok_{true};
     };
 

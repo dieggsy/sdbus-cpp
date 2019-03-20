@@ -58,23 +58,21 @@ class AdaptorAndProxyFixture : public ::testing::Test
 public:
     static void SetUpTestCase()
     {
-        m_connection.requestName(INTERFACE_NAME);
-        m_connection.enterProcessingLoopAsync();
-        //m_connection2.enterProcessingLoopAsync();
+        s_connection->requestName(INTERFACE_NAME);
+        s_connection->enterProcessingLoopAsync();
     }
 
     static void TearDownTestCase()
     {
-        //m_connection2.leaveProcessingLoop();
-        m_connection.leaveProcessingLoop();
-        m_connection.releaseName(INTERFACE_NAME);
+        s_connection->leaveProcessingLoop();
+        s_connection->releaseName(INTERFACE_NAME);
     }
 
 private:
     void SetUp() override
     {
-        m_adaptor = std::make_unique<TestingAdaptor>(m_connection);
-        m_proxy = std::make_unique<TestingProxy>(/*m_connection2, */INTERFACE_NAME, OBJECT_PATH);
+        m_adaptor = std::make_unique<TestingAdaptor>(*s_connection);
+        m_proxy = std::make_unique<TestingProxy>(INTERFACE_NAME, OBJECT_PATH);
         std::this_thread::sleep_for(50ms); // Give time for the proxy to start listening to signals
     }
 
@@ -85,17 +83,13 @@ private:
     }
 
 public:
-    static sdbus::internal::Connection m_connection;
-    //static sdbus::internal::Connection m_connection2;
+    static std::unique_ptr<sdbus::IConnection> s_connection;
 
     std::unique_ptr<TestingAdaptor> m_adaptor;
     std::unique_ptr<TestingProxy> m_proxy;
 };
 
-sdbus::internal::Connection AdaptorAndProxyFixture::m_connection{sdbus::internal::Connection::BusType::eSystem,
-                                                                 std::make_unique<SdBus>()};
-//sdbus::internal::Connection AdaptorAndProxyFixture::m_connection2{sdbus::internal::Connection::BusType::eSystem};
-
+std::unique_ptr<sdbus::IConnection> AdaptorAndProxyFixture::s_connection = sdbus::createSystemBusConnection();
 }
 
 /*-------------------------------------*/
@@ -354,13 +348,13 @@ TEST_F(SdbusTestObject, FailsCallingMethodOnNonexistentInterface)
 
 TEST_F(SdbusTestObject, FailsCallingMethodOnNonexistentDestination)
 {
-    TestingProxy proxy("wrongDestination", OBJECT_PATH);
+    TestingProxy proxy("sdbuscpp.destination.that.does.not.exist", OBJECT_PATH);
     ASSERT_THROW(proxy.getInt(), sdbus::Error);
 }
 
 TEST_F(SdbusTestObject, FailsCallingMethodOnNonexistentObject)
 {
-    TestingProxy proxy(INTERFACE_NAME, "/wrong/path");
+    TestingProxy proxy(INTERFACE_NAME, "/sdbuscpp/path/that/does/not/exist");
     ASSERT_THROW(proxy.getInt(), sdbus::Error);
 }
 
@@ -403,7 +397,7 @@ TEST_F(SdbusTestObject, EmitsSignalWithoutRegistrationSuccesfully)
     ASSERT_THAT(signature["platform"], Eq("av"));
 }
 
-TEST_F(SdbusTestObject, failsEmitingSignalOnNonexistentInterface)
+TEST_F(SdbusTestObject, FailsEmittingSignalOnNonexistentInterface)
 {
     ASSERT_THROW(m_adaptor->emitSignalOnNonexistentInterface(), sdbus::Error);
 }

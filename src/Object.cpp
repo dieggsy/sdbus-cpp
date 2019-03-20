@@ -239,12 +239,14 @@ void Object::activateInterfaceVTable( const std::string& interfaceName
 
 int Object::sdbus_method_callback(sd_bus_message *sdbusMessage, void *userData, sd_bus_error *retError)
 {
+    auto* object = static_cast<Object*>(userData);
+    assert(object != nullptr);
+
     auto refCount = *((unsigned*)sdbusMessage);
     std::cout << "sdbus_method_callback RefCount == " << refCount << std::endl;
 
-    MethodCall message(sdbusMessage);
+    MethodCall message{sdbusMessage, &object->connection_.getSdBusInterface()};
 
-    auto* object = static_cast<Object*>(userData);
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers
     auto& callback = object->interfaces_[message.getInterfaceName()].methods_[message.getMemberName()].callback_;
     assert(callback);
@@ -255,7 +257,6 @@ int Object::sdbus_method_callback(sd_bus_message *sdbusMessage, void *userData, 
     }
     catch (const sdbus::Error& e)
     {
-        std::cerr << "Server: Caught and returning an error " << e.getName() << std::endl;
         sd_bus_error_set(retError, e.getName().c_str(), e.getMessage().c_str());
     }
 
@@ -270,9 +271,9 @@ int Object::sdbus_property_get_callback( sd_bus */*bus*/
                                        , void *userData
                                        , sd_bus_error *retError )
 {
-    Message reply(sdbusReply);
-
     auto* object = static_cast<Object*>(userData);
+    assert(object != nullptr);
+
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers
     auto& callback = object->interfaces_[interface].properties_[property].getCallback_;
     // Getter can be empty - the case of "write-only" property
@@ -281,6 +282,8 @@ int Object::sdbus_property_get_callback( sd_bus */*bus*/
         sd_bus_error_set(retError, "org.freedesktop.DBus.Error.Failed", "Cannot read property as it is write-only");
         return 1;
     }
+
+    Message reply{sdbusReply, &object->connection_.getSdBusInterface()};
 
     try
     {
@@ -302,12 +305,14 @@ int Object::sdbus_property_set_callback( sd_bus */*bus*/
                                        , void *userData
                                        , sd_bus_error *retError )
 {
-    Message value(sdbusValue);
-
     auto* object = static_cast<Object*>(userData);
+    assert(object != nullptr);
+
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers
     auto& callback = object->interfaces_[interface].properties_[property].setCallback_;
     assert(callback);
+
+    Message value{sdbusValue, &object->connection_.getSdBusInterface()};
 
     try
     {
