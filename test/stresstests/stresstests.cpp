@@ -127,7 +127,7 @@ public:
                         break;
                     auto request = requests_.front();
                     // TODO: Assert ze ma request.result.callMsg aspon 1 refcount
-                    auto refCount = *((unsigned*)request.result.call_.getMsg());
+                    auto refCount = *((unsigned*)request.result.call_.msg_);
                     //std::cout << "RefCount == " << refCount << std::endl;
                     if (refCount == 1 || refCount == 3)
                     {
@@ -146,7 +146,7 @@ public:
 
                     if (refCount == 1 || refCount == 3)
                     {
-                        refCount = *((unsigned*)request.result.call_.getMsg());
+                        refCount = *((unsigned*)request.result.call_.msg_);
                         std::cout << " RefCount == " << refCount << std::endl;
                     }
                 }
