@@ -242,9 +242,6 @@ int Object::sdbus_method_callback(sd_bus_message *sdbusMessage, void *userData, 
     auto* object = static_cast<Object*>(userData);
     assert(object != nullptr);
 
-    //auto refCount = *((unsigned*)sdbusMessage);
-    //std::cout << "sdbus_method_callback RefCount == " << refCount << std::endl;
-
     MethodCall message{sdbusMessage, &object->connection_.getSdBusInterface()};
 
     // Note: The lookup can be optimized by using sorted vectors instead of associative containers

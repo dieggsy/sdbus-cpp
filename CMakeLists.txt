@@ -13,9 +13,7 @@ include(GNUInstallDirs) # Installation directories for `install` command and pkg
 #-------------------------------
 
 find_package(PkgConfig REQUIRED)
-#pkg_check_modules(SYSTEMD REQUIRED libsystemd>=236)
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g")
+pkg_check_modules(SYSTEMD REQUIRED libsystemd>=236)
 
 #-------------------------------
 # SOURCE FILES CONFIGURATION
@@ -97,9 +95,7 @@ set_target_properties(sdbus-c++
     SOVERSION "${SDBUSCPP_VERSION_MAJOR}"
     OUTPUT_NAME "sdbus-c++")
 
-# TODO: Remove
-target_link_libraries(sdbus-c++ -L/home/aeywalee/data/repos/systemd/.libs/ -lsystemd)
-#target_link_libraries(sdbus-c++ ${SYSTEMD_LIBRARIES})
+target_link_libraries(sdbus-c++ ${SYSTEMD_LIBRARIES})
 
 #----------------------------------
 # INSTALLATION
