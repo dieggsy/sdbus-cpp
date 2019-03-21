@@ -74,10 +74,10 @@ void Object::registerMethod( const std::string& interfaceName
 {
     SDBUS_THROW_ERROR_IF(!asyncMethodCallback, "Invalid method callback provided", EINVAL);
 
-    auto asyncCallback = [this, callback = std::move(asyncMethodCallback)](MethodCall& msg)
+    auto asyncCallback = [callback = std::move(asyncMethodCallback)](MethodCall& msg)
     {
-        MethodResult result{msg, *this};
-        callback(msg, result);
+        MethodResult result{msg};
+        callback(std::move(msg), std::move(result));
     };
 
     auto& interface = interfaces_[interfaceName];
@@ -242,8 +242,8 @@ int Object::sdbus_method_callback(sd_bus_message *sdbusMessage, void *userData, 
     auto* object = static_cast<Object*>(userData);
     assert(object != nullptr);
 
-    auto refCount = *((unsigned*)sdbusMessage);
-    std::cout << "sdbus_method_callback RefCount == " << refCount << std::endl;
+    //auto refCount = *((unsigned*)sdbusMessage);
+    //std::cout << "sdbus_method_callback RefCount == " << refCount << std::endl;
 
     MethodCall message{sdbusMessage, &object->connection_.getSdBusInterface()};
 

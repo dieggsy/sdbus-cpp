@@ -150,8 +150,7 @@ namespace sdbus {
         void seal();
         void rewind(bool complete);
 
-    //protected:
-    public:
+    protected:
         void* msg_{};
         internal::ISdBus* sdbus_{};
         mutable bool ok_{true};

@@ -43,9 +43,6 @@
 #include <condition_variable>
 #include <queue>
 
-// TODO delete
-#include <systemd/sd-bus.h>
-
 using namespace std::chrono_literals;
 using namespace std::string_literals;
 
@@ -118,21 +115,12 @@ public:
                 std::cout << "Created worker thread 0x" << std::hex << std::this_thread::get_id() << std::dec << std::endl;
                 while(!exit_)
                 {
-                    //std::cout << "Thread " << std::this_thread::get_id() << " going to wait" << std::endl;
                     // Pop a work item from the queue
                     std::unique_lock<std::mutex> lock(mutex_);
                     cond_.wait(lock, [this]{return !requests_.empty() || exit_;});
-                    //std::cout << "Thread " << std::this_thread::get_id() << " woken up" << std::endl;
                     if (exit_)
                         break;
-                    auto request = requests_.front();
-                    // TODO: Assert ze ma request.result.callMsg aspon 1 refcount
-                    auto refCount = *((unsigned*)request.result.call_.msg_);
-                    //std::cout << "RefCount == " << refCount << std::endl;
-                    if (refCount == 1 || refCount == 3)
-                    {
-                        std::cout << "   !!! Problem refCount == " << refCount << std::endl;
-                    }
+                    auto request = std::move(requests_.front());
                     requests_.pop();
                     lock.unlock();
 
@@ -140,17 +128,11 @@ public:
                     auto aString = request.input.at("key1").get<std::string>();
                     auto aNumber = request.input.at("key2").get<uint32_t>();
                     auto resultString = aString + " " + std::to_string(aNumber);
-                    request.result.returnResults(resultString);
-                    //std::cout << "Processed concatenation: " << resultString << std::endl;
-                    concatenatedSignal(resultString);
 
-                    if (refCount == 1 || refCount == 3)
-                    {
-                        refCount = *((unsigned*)request.result.call_.msg_);
-                        std::cout << " RefCount == " << refCount << std::endl;
-                    }
+                    request.result.returnResults(resultString);
+
+                    concatenatedSignal(resultString);
                 }
-                //std::cout << "Thread " << std::this_thread::get_id() << " exiting" << std::endl;
             });
     }
 
@@ -163,11 +145,14 @@ public:
     }
 
 protected:
-    virtual void concatenate(sdbus::Result<std::string> result, const std::map<std::string, sdbus::Variant>& params) override
+    virtual void concatenate(sdbus::Result<std::string>&& result, std::map<std::string, sdbus::Variant> params) override
     {
-        //std::cout << "Got concatenation request: " << params.at("key2").get<uint32_t>() << std::endl;
+        // Debugging relics
+        //auto refCount = *((unsigned*)result.call_.msg_);
+        //assert(refCount == 3);
+
         std::unique_lock<std::mutex> lock(mutex_);
-        requests_.push(WorkItem{params, std::move(result)});
+        requests_.push(WorkItem{std::move(params), std::move(result)});
         lock.unlock();
         cond_.notify_one();
     }
@@ -277,7 +262,7 @@ int main(int /*argc*/, char */*argv*/[])
                     // otherwise sleep a bit to slow down flooding the server.
                     assert(localCounter >= concatenator.repliesReceived_);
                     while ((localCounter - concatenator.repliesReceived_) > 20)
-                        std::this_thread::sleep_for(5ms);
+                        std::this_thread::sleep_for(2ms);
 
                     // Update statistics
                     concatenationCallsMade = localCounter;
@@ -289,21 +274,21 @@ int main(int /*argc*/, char */*argv*/[])
 
         std::thread thermometerThread([&]()
         {
-//            FahrenheitThermometerProxy thermometer(con, SERVICE_1_BUS_NAME, FAHRENHEIT_THERMOMETER_OBJECT_PATH);
-//            uint32_t localCounter{};
-//            uint32_t previousTemperature{};
+            FahrenheitThermometerProxy thermometer(con, SERVICE_1_BUS_NAME, FAHRENHEIT_THERMOMETER_OBJECT_PATH);
+            uint32_t localCounter{};
+            uint32_t previousTemperature{};
 
-//            while (!stopClients)
-//            {
-//                localCounter++;
-//                auto temperature = thermometer.getCurrentTemperature();
-//                assert(temperature >= previousTemperature); // The temperature shall rise continually
-//                previousTemperature = temperature;
-//                std::this_thread::sleep_for(5ms);
+            while (!stopClients)
+            {
+                localCounter++;
+                auto temperature = thermometer.getCurrentTemperature();
+                assert(temperature >= previousTemperature); // The temperature shall rise continually
+                previousTemperature = temperature;
+                std::this_thread::sleep_for(5ms);
 
-//                if ((localCounter % 10) == 0)
-//                    thermometerCallsMade = localCounter;
-//            }
+                if ((localCounter % 10) == 0)
+                    thermometerCallsMade = localCounter;
+            }
         });
 
         con.enterProcessingLoop();
@@ -325,9 +310,8 @@ int main(int /*argc*/, char */*argv*/[])
         }
     });
 
-    //__builtin_trap();
-
     getchar();
+    //std::this_thread::sleep_for(120s);
 
     exitLogger = true;
     loggerThread.join();

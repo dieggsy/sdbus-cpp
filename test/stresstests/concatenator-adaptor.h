@@ -23,7 +23,7 @@ protected:
     concatenator_adaptor(sdbus::IObject& object)
         : object_(object)
     {
-        object_.registerMethod("concatenate").onInterface(interfaceName).implementedAs([this](sdbus::Result<std::string> result, const std::map<std::string, sdbus::Variant>& params){ this->concatenate(std::move(result), params); });
+        object_.registerMethod("concatenate").onInterface(interfaceName).implementedAs([this](sdbus::Result<std::string>&& result, std::map<std::string, sdbus::Variant> params){ this->concatenate(std::move(result), std::move(params)); });
         object_.registerSignal("concatenatedSignal").onInterface(interfaceName).withParameters<std::string>();
     }
 
@@ -34,7 +34,7 @@ public:
     }
 
 private:
-    virtual void concatenate(sdbus::Result<std::string> result, const std::map<std::string, sdbus::Variant>& params) = 0;
+    virtual void concatenate(sdbus::Result<std::string>&& result, std::map<std::string, sdbus::Variant> params) = 0;
 
 private:
     sdbus::IObject& object_;
