@@ -147,10 +147,6 @@ public:
 protected:
     virtual void concatenate(sdbus::Result<std::string>&& result, std::map<std::string, sdbus::Variant> params) override
     {
-        // Debugging relics
-        //auto refCount = *((unsigned*)result.call_.msg_);
-        //assert(refCount == 3);
-
         std::unique_lock<std::mutex> lock(mutex_);
         requests_.push(WorkItem{std::move(params), std::move(result)});
         lock.unlock();
@@ -261,7 +257,7 @@ int main(int /*argc*/, char */*argv*/[])
                     // Make sure the system is catching up with our async requests,
                     // otherwise sleep a bit to slow down flooding the server.
                     assert(localCounter >= concatenator.repliesReceived_);
-                    while ((localCounter - concatenator.repliesReceived_) > 20)
+                    while ((localCounter - concatenator.repliesReceived_) > 20 && !stopClients)
                         std::this_thread::sleep_for(2ms);
 
                     // Update statistics
@@ -311,7 +307,6 @@ int main(int /*argc*/, char */*argv*/[])
     });
 
     getchar();
-    //std::this_thread::sleep_for(120s);
 
     exitLogger = true;
     loggerThread.join();
