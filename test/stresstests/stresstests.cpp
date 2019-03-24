@@ -1,7 +1,7 @@
 /**
  * (C) 2019 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
  *
- * @file client.cpp
+ * @file stresstests.cpp
  *
  * Created on: Jan 25, 2019
  * Project: sdbus-c++
@@ -112,7 +112,8 @@ public:
         for (unsigned int i = 0; i < workers; ++i)
             workers_.emplace_back([this]()
             {
-                std::cout << "Created worker thread 0x" << std::hex << std::this_thread::get_id() << std::dec << std::endl;
+                //std::cout << "Created worker thread 0x" << std::hex << std::this_thread::get_id() << std::dec << std::endl;
+
                 while(!exit_)
                 {
                     // Pop a work item from the queue
