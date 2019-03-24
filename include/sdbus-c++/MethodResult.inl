@@ -1,7 +1,7 @@
 /**
  * (C) 2017 KISTLER INSTRUMENTE AG, Winterthur, Switzerland
  *
- * @file ConvenienceClasses.h
+ * @file MethodResult.inl
  *
  * Created on: Mar 21, 2019
  * Project: sdbus-c++
