@@ -60,7 +60,6 @@ namespace sdbus {
 
     // Assume the caller has already obtained message ownership
     struct adopt_message_t { explicit adopt_message_t() = default; };
-    inline constexpr adopt_message_t adopt_message{};
 #ifdef __cpp_inline_variables
     inline constexpr adopt_message_t adopt_message{};
 #else
