@@ -50,8 +50,7 @@ Note: sdbus-c++ library depends on C++17, since it uses C++17 `std::uncaught_exc
 Header files and namespaces
 ---------------------------
 
-All sdbus-c++ header files reside in the `sdbus-c++` subdirectory within the standard include directory. Users can either include 
-individual header files, like so:
+All sdbus-c++ header files reside in the `sdbus-c++` subdirectory within the standard include directory. Users can either include individual header files, like so:
 
 ```cpp
 #include <sdbus-c++/IConnection.h>
@@ -70,10 +69,11 @@ Error signalling and propagation
 --------------------------------
 
 `sdbus::Error` exception is used to signal errors in sdbus-c++. There are two types of errors:
-  * D-Bus related errors, like call timeouts, failed socket allocation, etc.
-  * user errors, i.e. errors signalled and propagated from remote methods back to the caller.
 
-The exception object carries the error name and error message with it.
+  * D-Bus related errors, like call timeouts, failed socket allocation, etc. These are raised by the D-Bus library or D-Bus daemon itself.
+  * user-defined errors, i.e. errors signalled and propagated from remote methods back to the caller. So these are issued by sdbus-c++ users.
+
+`sdbus::Error` is a carrier for both types of errors, carrying the error name and error message with it.
 
 sdbus-c++ design
 ----------------
@@ -82,25 +82,29 @@ The following diagram illustrates the major entities in sdbus-c++.
 
 ![class](sdbus-c++-class-diagram.png)
 
-`IConnection` represents the concept of a D-Bus connection. You can connect to either the system bus or a session bus. Services can assign unique service names to those connections. A processing loop can be run on the connection.
+`IConnection` represents the concept of a D-Bus connection. You can connect to either the system bus or a session bus. Services can assign unique service names to those connections. A processing loop should be run on the connection.
 
 `IObject` represents the concept of an object that exposes its methods, signals and properties. Its responsibilities are:
-* registering (possibly multiple) interfaces and methods, signals, properties on those interfaces,
-* emitting signals.
-    
+
+  * registering (possibly multiple) interfaces and methods, signals, properties on those interfaces,
+  * emitting signals.
+
 `IObjectProxy` represents the concept of the proxy, which is a view of the `Object` from the client side. Its responsibilities are:
-* invoking remote methods of the corresponding object,
-* registering handlers for signals.
+
+  * invoking remote methods of the corresponding object, in both synchronous and asynchronous way,
+  * registering handlers for signals,
 
 `Message` class represents a message, which is the fundamental DBus concept. There are three distinctive types of message that derive from the `Message` class:
-* `MethodCall` (with serialized parameters),
-* `MethodReply` (with serialized return values),
-* or a `Signal` (with serialized parameters).
+
+  * `MethodCall` (with serialized parameters),
+  * `MethodReply` (with serialized return values),
+  * or a `Signal` (with serialized parameters).
 
 Multiple layers of sdbus-c++ API
 -------------------------------
 
 sdbus-c++ API comes in two layers:
+
   * [the basic layer](#implementing-the-concatenator-example-using-basic-sdbus-c-api-layer), which is a simple wrapper layer on top of sd-bus, using mechanisms that are native to C++ (e.g. serialization/deserialization of data from messages),
   * [the convenience layer](#implementing-the-concatenator-example-using-convenience-sdbus-c-api-layer), building on top of the basic layer, which aims at alleviating users from unnecessary details and enables them to write shorter, safer, and more expressive code.
 
@@ -110,21 +114,22 @@ An example: Number concatenator
 -------------------------------
 
 Let's have an object `/org/sdbuscpp/concatenator` that implements the `org.sdbuscpp.concatenator` interface. The interface exposes the following:
-* a `concatenate` method that takes a collection of integers and a separator string and returns a string that is the concatenation of all 
-  integers from the collection using given separator,
-* a `concatenated` signal that is emitted at the end of each successful concatenation.
+
+  * a `concatenate` method that takes a collection of integers and a separator string and returns a string that is the concatenation of all integers from the collection using given separator,
+  * a `concatenated` signal that is emitted at the end of each successful concatenation.
 
 In the following sections, we will elaborate on the ways of implementing such an object on both the server and the client side.
 
 Implementing the Concatenator example using basic sdbus-c++ API layer
 ---------------------------------------------------------------------
 
-In the basic API layer, we already have abstractions for D-Bus connections, objects and object proxies, with which we can interact via 
-interfaces. However, we still work with the concept of messages. To issue a method call for example, we have to go through several steps: 
-we have to create a method call message first, serialize method arguments into the message, and send the message at last. We get the reply 
-message (if applicable) in return, so we have to deserialize the return values from it manually.
+In the basic API layer, we already have abstractions for D-Bus connections, objects and object proxies, with which we can interact via their interface classes (`IConnection`, `IObject`, `IObjectProxy`), but, analogously to the underlying sd-bus C library, we still work on the level of D-Bus messages. We need to
 
-Overloaded versions of C++ insertion/extraction operators are used for serialization/deserialization. That makes the client code much simpler.
+  * create them,
+  * serialize/deserialize arguments to/from them (thanks to many overloads of C++ insertion/extraction operators, this is very simple),
+  * send them over to the other side.
+
+This is how a simple Concatenator service implemented upon the basic sdbus-c++ API could look like:
 
 ### Server side
 
@@ -190,6 +195,12 @@ int main(int argc, char *argv[])
     connection->enterProcessingLoop();
 }
 ```
+
+We establish a D-Bus sytem connection and request `org.sdbuscpp.concatenator` D-Bus name on it. This name will be used by D-Bus clients to find the service. We then create an object with path `/org/sdbuscpp/concatenator` on this connection. We register  interfaces, its methods, signals that the object provides, and, through `finishRegistration()`, export the object (i.e., make it visible to clients) on the bus. Then we need to make sure to run the event loop upon the connection, which handles all incoming, outgoing and other requests.
+
+The callback for any D-Bus object method on this level is any callable of signature `void(sdbus::MethodCall& call, sdbus::MethodReply& reply)`. The first parameter `call` is the incoming method call message. We need to deserialize input arguments from it. When we can invoke the logic and get the results. Then we serialize the results to the second parameter, the pre-constructed `reply` message. The reply is then sent automatically by sdbus-c++. We also fire a signal with the results. To do this, we need to create a signal message via object's `createSignal()`, serialize the results into it, and then send it out to subscribers by invoking object's `emitSignal()`.
+
+Please note that we can create and destroy D-Bus objects on a connection dynamically, at any time during runtime, even while there is an active event loop upon the connection. So managing D-Bus objects' lifecycle (creating, exporting and destroying D-Bus objects) is completely thread-safe.
 
 ### Client side
 
@@ -257,7 +268,17 @@ int main(int argc, char *argv[])
 }
 ```
 
-### Proxy and D-Bus connection
+In simple cases, we don't need to create D-Bus connection explicitly. Each D-Bus object proxy can create a connection of his own, unless a connection is provided to it explicitly via factory parameter. This is the case in the example above. So we create a proxy for object `/org/sdbuscpp/concatenator` publicly available at bus `org.sdbuscpp.concatenator`. We register signal handlers, if any, and finish the registration, making the object proxy ready for use.
+
+The callback for a D-Bus signal handler on this level is any callable of signature `void(sdbus::Signal& signal)`. The one and only parameter `signal` is the incoming signal message. We need to deserialize arguments from it, and then we can do our business logic with it.
+
+Subsequently, we invoke two RPC calls to object's `concatenate()` method. We create a method call message by invoking proxy's `createMethodCall()`. We serialize method input arguments into it, and make a synchronous call via proxy's `callMethod()`. As a return value we get the reply message as soon as it arrives. We deserialize return values from that message, and further use it in our program. The second `concatenate()` RPC call is done with invalid arguments, so we get a D-Bus error reply from the service, which as we can see is manifested via `sdbus::Error` exception being thrown.
+
+Please note that we can create and destroy D-Bus object proxies dynamically, at any time during runtime, even when they share common D-Bus connection and there is an active event loop upon the connection. So managing D-Bus object proxies' lifecycle (creating and destroying D-Bus object proxies) is completely thread-safe.
+
+### Design of D-Bus connections in sdbus-c++
+
+Let's now look more closely into TODO CONTINUE
 
 There are three ways of creating the object proxy -- three overloads of `sdbus::createObjectProxy`. They differ from each other as to how the proxy towards the connection will behave upon creation:
 
